@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Premi della festa</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,600;1,6..96,500&family=Karla:wght@400;500;700&display=swap" rel="stylesheet">
+
+<script>
+/* ============================ CONFIG-START ============================
+   UNICA FONTE DI VERITÀ.
+   Lo script Python di spoglio legge QUESTO blocco direttamente da questo file:
+   per questo il contenuto è JSON valido (chiavi fra virgolette, niente commenti
+   interni, niente virgole finali). Se modifichi qui, lo spoglio si aggiorna da solo.
+
+   "endpoint": URL /exec dell'Apps Script. Se è "" la scheda ricade sul
+   metodo WhatsApp (nessun backend). Se è valorizzato, il voto viene inviato
+   in HTTP e WhatsApp resta solo come rete di sicurezza in caso di errore.
+
+   IMPORTANTISSIMO: l'ORDINE degli array "partecipanti" e "categorie" determina
+   gli indici numerici usati nel codice voto. Se cambi l'ordine DOPO che qualcuno
+   ha già votato, i voti vecchi diventano illeggibili. In quel caso incrementa
+   "versione": lo spoglio scarterà i voti della versione sbagliata invece di
+   contarli male (fallire rumorosamente > sbagliare in silenzio).
+====================================================================== */
+const CONFIG = {
+  "versione": 1,
+  "titolo": "Premi della festa",
+  "sottotitolo": "Scegli un nome per ogni premio. Ci vuole un minuto.",
+  "whatsapp": "393347951530",
+  "endpoint": "https://script.google.com/macros/s/AKfycbwZrMhV4gp4YHDa6OaIhprxquGBTvvr60iq3DmfcRuFbg-RYm_HLoRg2c71VbA1tmHu/exec",
+
+  "partecipanti": [
+    "Alice", "Beatrice", "Carlo", "Davide", "Elena",
+    "Federico", "Giulia", "Ilaria", "Jacopo", "Luca",
+    "Marco", "Nadia", "Omar"
+  ],
+
+  "categorie": [
+    { "id": "top3",     "nome": "I tre costumi migliori", "picks": 3, "aiuto": "In ordine: primo, secondo, terzo." },
+    { "id": "peggiore", "nome": "Il costume più brutto",   "picks": 1, "aiuto": "" },
+    { "id": "paura",    "nome": "Quello che fa più paura", "picks": 1, "aiuto": "" },
+    { "id": "ridere",   "nome": "Quello più ridicolo",     "picks": 1, "aiuto": "" },
+    { "id": "fatica",   "nome": "Chi ci ha messo più impegno", "picks": 1, "aiuto": "" },
+    { "id": "pigro",    "nome": "Chi si è impegnato di meno",  "picks": 1, "aiuto": "Il classico 'ho la maschera in tasca'." }
+  ]
+};
+/* ============================= CONFIG-END ============================= */
+</script>
+
+<style>
+:root{
+  --ink:#190D1C;          /* fondo, prugna quasi nera */
+  --surface:#271531;      /* blocco categoria */
+  --raised:#3A2145;       /* chip non selezionato */
+  --line:#4A2C56;
+  --paper:#F2E8EE;        /* testo principale */
+  --muted:#A893B0;        /* testo secondario */
+  --gold:#E8B04B;         /* accento: premio */
+  --rose:#E0587F;         /* accento: selezione */
+  --ok:#57C9A0;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  margin:0;
+  background:var(--ink);
+  color:var(--paper);
+  font-family:Karla,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:16px; line-height:1.5;
+  padding-bottom:calc(96px + env(safe-area-inset-bottom));
+}
+.wrap{max-width:560px;margin:0 auto;padding:0 18px}
+
+/* ---------- testata ---------- */
+header{padding:46px 0 26px;text-align:center}
+.crest{
+  width:46px;height:46px;margin:0 auto 18px;border:1px solid var(--gold);
+  border-radius:50%;display:grid;place-items:center;
+  font-family:"Bodoni Moda",serif;font-size:20px;color:var(--gold);
+}
+h1{
+  font-family:"Bodoni Moda",serif;font-weight:400;font-style:italic;
+  font-size:clamp(34px,10vw,50px); line-height:1.02; margin:0 0 12px;
+  letter-spacing:-.01em;
+}
+.sub{color:var(--muted);margin:0;font-size:15px}
+
+/* ---------- campo nome votante ---------- */
+.votante{margin:30px 0 8px}
+label{display:block;font-size:13px;color:var(--muted);margin-bottom:8px}
+input[type=text]{
+  width:100%;padding:13px 15px;border-radius:11px;
+  background:var(--surface);border:1px solid var(--line);
+  color:var(--paper);font:inherit;
+}
+input[type=text]::placeholder{color:#7B6882}
+input[type=text]:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-color:transparent}
+
+/* ---------- blocco categoria ---------- */
+.cat{
+  background:var(--surface);border:1px solid var(--line);
+  border-radius:16px;padding:20px 18px;margin:16px 0;
+}
+.cat h2{
+  font-family:"Bodoni Moda",serif;font-weight:600;font-size:23px;
+  margin:0;line-height:1.2;
+}
+.cat .aiuto{color:var(--muted);font-size:13.5px;margin:6px 0 0}
+.stato{
+  font-size:13px;color:var(--muted);margin:10px 0 14px;
+  display:flex;align-items:center;gap:7px;
+}
+.stato.pieno{color:var(--ok)}
+.stato .pallino{width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{
+  position:relative;font:inherit;font-size:15px;
+  padding:9px 14px;border-radius:999px;cursor:pointer;
+  background:var(--raised);color:var(--paper);
+  border:1px solid transparent;
+  transition:background .12s ease, color .12s ease, transform .12s ease;
+}
+.chip:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.chip[aria-pressed="true"]{background:var(--rose);color:#20101C;font-weight:700}
+.chip[aria-pressed="true"] .rank{
+  display:inline-grid;place-items:center;
+  width:17px;height:17px;border-radius:50%;
+  background:#20101C;color:var(--rose);
+  font-size:11px;font-weight:700;margin-right:7px;vertical-align:1px;
+}
+.chip .rank{display:none}
+.chip.nascosto{display:none}
+
+.filtro{
+  width:100%;padding:9px 13px;border-radius:9px;margin-bottom:12px;
+  background:var(--ink);border:1px solid var(--line);color:var(--paper);font:inherit;font-size:14px;
+}
+
+/* ---------- barra invio ---------- */
+.barra{
+  position:fixed;left:0;right:0;bottom:0;z-index:10;
+  background:rgba(25,13,28,.94);
+  -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);
+  border-top:1px solid var(--line);
+  padding:12px 18px calc(12px + env(safe-area-inset-bottom));
+}
+.barra-in{max-width:560px;margin:0 auto;display:flex;align-items:center;gap:14px}
+.avanz{font-size:13px;color:var(--muted);flex:none;min-width:74px}
+.avanz b{display:block;color:var(--paper);font-size:15px}
+button.invia{
+  flex:1;padding:15px;border:0;border-radius:12px;
+  background:var(--gold);color:#2A1608;
+  font:inherit;font-weight:700;font-size:16px;cursor:pointer;
+}
+button.invia:disabled{background:var(--raised);color:#7B6882;cursor:not-allowed}
+button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
+
+.esito{
+  margin:16px 0 0;padding:13px 15px;border-radius:11px;font-size:14.5px;
+  border:1px solid var(--line);
+}
+.esito.ok{border-color:var(--ok);color:var(--ok)}
+.esito.ko{border-color:var(--rose);color:var(--rose)}
+.esito[hidden]{display:none}
+
+.secondaria{
+  display:block;width:100%;margin:14px 0 40px;padding:12px;
+  background:transparent;border:1px solid var(--line);border-radius:11px;
+  color:var(--muted);font:inherit;font-size:14px;cursor:pointer;
+}
+.secondaria:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+
+.avviso{
+  font-size:13px;color:var(--muted);text-align:center;
+  border-top:1px solid var(--line);padding-top:18px;margin-top:8px;
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="crest" aria-hidden="true">★</div>
+    <h1 id="titolo"></h1>
+    <p class="sub" id="sottotitolo"></p>
+  </header>
+
+  <div class="votante">
+    <label for="nome">Il tuo nome</label>
+    <input type="text" id="nome" placeholder="Come ti conoscono alla festa" autocomplete="off" enterkeyhint="done">
+  </div>
+
+  <main id="schede"></main>
+
+  <p class="esito" id="esito" hidden></p>
+  <button class="secondaria" id="wa" hidden>Manda il voto su WhatsApp</button>
+  <button class="secondaria" id="copia">Copia il voto come testo</button>
+
+  <p class="avviso">Il voto arriva solo nella chat privata dell'organizzatore. Nessuno nel gruppo lo vede.</p>
+</div>
+
+<div class="barra">
+  <div class="barra-in">
+    <div class="avanz"><b id="conta">0/0</b>premi</div>
+    <button class="invia" id="invia" disabled>Invia il voto</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---------------------------------------------------------------
+     STATO
+     voti = { idCategoria: [indiceNome, ...] }
+     Conservo gli INDICI, non i nomi: l'indice è l'unità di codifica
+     e l'ordine dell'array è già il ranking del podio. Nessuna struttura
+     parallela da tenere sincronizzata.
+  --------------------------------------------------------------- */
+  const voti = {};
+  CONFIG.categorie.forEach(c => voti[c.id] = []);
+
+  const $ = s => document.querySelector(s);
+  document.getElementById("titolo").textContent = CONFIG.titolo;
+  document.getElementById("sottotitolo").textContent = CONFIG.sottotitolo;
+  document.title = CONFIG.titolo;
+
+  /* ---------------------------------------------------------------
+     COSTRUZIONE DOM
+     Genero tutto da CONFIG: aggiungere una categoria o un nome non
+     richiede di toccare l'HTML. Uso <button aria-pressed> invece di
+     <select> perché su mobile un tap batte due tap + scroll ruota,
+     e perché il podio ha bisogno di mostrare l'ordine 1-2-3.
+  --------------------------------------------------------------- */
+  const schede = document.getElementById("schede");
+
+  CONFIG.categorie.forEach(cat => {
+    const sez = document.createElement("section");
+    sez.className = "cat";
+
+    const h = document.createElement("h2");
+    h.textContent = cat.nome;
+    sez.appendChild(h);
+
+    if (cat.aiuto) {
+      const p = document.createElement("p");
+      p.className = "aiuto";
+      p.textContent = cat.aiuto;
+      sez.appendChild(p);
+    }
+
+    const stato = document.createElement("p");
+    stato.className = "stato";
+    stato.innerHTML = '<span class="pallino"></span><span></span>';
+    sez.appendChild(stato);
+
+    // Filtro di ricerca: compare solo se la lista è lunga abbastanza
+    // da rendere lo scorrimento fastidioso. Sotto i 14 nomi è rumore.
+    if (CONFIG.partecipanti.length > 14) {
+      const f = document.createElement("input");
+      f.type = "text"; f.className = "filtro"; f.placeholder = "Cerca un nome";
+      f.autocomplete = "off";
+      f.addEventListener("input", () => {
+        const q = f.value.trim().toLowerCase();
+        chips.forEach(ch => {
+          // un nome selezionato resta sempre visibile: altrimenti
+          // l'utente non può deselezionarlo mentre filtra
+          const sel = ch.getAttribute("aria-pressed") === "true";
+          ch.classList.toggle("nascosto",
+            !sel && q !== "" && !ch.dataset.nome.toLowerCase().includes(q));
+        });
+      });
+      sez.appendChild(f);
+    }
+
+    const cont = document.createElement("div");
+    cont.className = "chips";
+    const chips = CONFIG.partecipanti.map((nome, i) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip";
+      b.dataset.nome = nome;
+      b.setAttribute("aria-pressed", "false");
+      b.innerHTML = '<span class="rank"></span>';
+      b.append(nome);
+      b.addEventListener("click", () => tap(cat, i));
+      cont.appendChild(b);
+      return b;
+    });
+    sez.appendChild(cont);
+    schede.appendChild(sez);
+
+    // Chiusura: ogni categoria si ridisegna da sola leggendo voti[cat.id]
+    cat._render = function(){
+      const scelte = voti[cat.id];
+      chips.forEach((ch, i) => {
+        const pos = scelte.indexOf(i);
+        ch.setAttribute("aria-pressed", pos >= 0 ? "true" : "false");
+        ch.querySelector(".rank").textContent = (cat.picks > 1 && pos >= 0) ? (pos + 1) : "";
+      });
+      const done = scelte.length === cat.picks;
+      stato.classList.toggle("pieno", done);
+      stato.lastElementChild.textContent = done
+        ? (cat.picks > 1 ? "Podio completo" : "Scelto: " + CONFIG.partecipanti[scelte[0]])
+        : (cat.picks > 1
+            ? "Mancano " + (cat.picks - scelte.length) + " scelte su " + cat.picks
+            : "Nessuna scelta");
+    };
+  });
+
+  /* ---------------------------------------------------------------
+     LOGICA DI SELEZIONE
+     Un solo comportamento per entrambi i casi (picks=1 e picks=3):
+       - già selezionato  -> lo tolgo (e il podio si ricompatta da solo)
+       - lista piena      -> tolgo il più vecchio (FIFO) e aggiungo
+       - altrimenti       -> aggiungo in coda
+     Con picks=1 la regola FIFO degenera nel classico radio button.
+     Un solo ramo di codice = un solo posto dove sbagliare.
+  --------------------------------------------------------------- */
+  function tap(cat, i){
+    const s = voti[cat.id];
+    const pos = s.indexOf(i);
+    if (pos >= 0)            s.splice(pos, 1);
+    else {
+      if (s.length >= cat.picks) s.shift();
+      s.push(i);
+    }
+    cat._render();
+    aggiornaBarra();
+  }
+
+  const btnInvia = document.getElementById("invia");
+  const inputNome = document.getElementById("nome");
+  inputNome.addEventListener("input", aggiornaBarra);
+
+  function complete(){
+    return CONFIG.categorie.filter(c => voti[c.id].length === c.picks).length;
+  }
+  function aggiornaBarra(){
+    const n = complete();
+    document.getElementById("conta").textContent = n + "/" + CONFIG.categorie.length;
+    btnInvia.disabled = !(n === CONFIG.categorie.length && inputNome.value.trim().length >= 2);
+    // Se il votante tocca qualcosa dopo un invio riuscito, l'esito mostrato
+    // non descrive più lo stato corrente della scheda: va rimosso, altrimenti
+    // resta a schermo un "Voto registrato" che si riferisce a scelte diverse.
+    if (btnInvia.textContent !== "Invio in corso") {
+      btnInvia.textContent = "Invia il voto";
+      esito.hidden = true;
+    }
+  }
+
+  /* ---------------------------------------------------------------
+     CODIFICA DEL VOTO
+       VOTO<versione>|<nome>|<cat0>|<cat1>|...
+     dove <catN> sono gli indici in base36 separati da "-" nell'ordine
+     di scelta. Base36 tiene ogni indice a 1 carattere fino a 36 nomi.
+
+       VOTO1|Marco|6-9-f|3|1|c|0|h
+
+     Perché indici e non nomi per esteso:
+       - il messaggio resta corto e incollabile senza a capo strani
+       - due omonimi non collassano (indici diversi, nomi uguali)
+       - lo spoglio non deve fare fuzzy matching su "Giulia"/"giulia "
+     Il pipe "|" è il separatore, quindi va rimosso dal nome votante.
+  --------------------------------------------------------------- */
+  function codice(){
+    const nome = inputNome.value.trim().replace(/[|\r\n]/g, " ").slice(0, 40);
+    const parti = CONFIG.categorie.map(c =>
+      voti[c.id].map(i => i.toString(36)).join("-"));
+    return "VOTO" + CONFIG.versione + "|" + nome + "|" + parti.join("|");
+  }
+
+  // Parte leggibile: serve al votante per fidarsi di quello che invia
+  // e a te per capire a occhio se un messaggio è arrivato monco.
+  function messaggio(){
+    const righe = [CONFIG.titolo, "Votante: " + inputNome.value.trim(), ""];
+    CONFIG.categorie.forEach(c => {
+      const nomi = voti[c.id].map(i => CONFIG.partecipanti[i]);
+      righe.push(c.nome + ": " + (c.picks > 1
+        ? nomi.map((n, k) => (k + 1) + ") " + n).join("  ")
+        : nomi[0]));
+    });
+    righe.push("", "--- non cancellare la riga qui sotto ---", codice());
+    return righe.join("\n");
+  }
+
+  /* ---------------------------------------------------------------
+     INVIO
+     Due canali, in ordine di preferenza:
+       1. POST all'endpoint (Apps Script -> Google Sheet). Automatico.
+       2. WhatsApp. Manuale, ma non dipende da nessun servizio esterno.
+     Il secondo non è un ripiego estetico: è il piano B che si attiva da
+     solo se il primo fallisce. Un votante che vede "errore" e basta è un
+     voto perso; un votante che vede un pulsante alternativo no.
+  --------------------------------------------------------------- */
+  const esito = document.getElementById("esito");
+  const btnWa = document.getElementById("wa");
+
+  function apriWhatsapp(){
+    // wa.me apre la chat PRIVATA del numero indicato, non il gruppo.
+    window.open("https://wa.me/" + CONFIG.whatsapp +
+                "?text=" + encodeURIComponent(messaggio()), "_blank", "noopener");
+  }
+  btnWa.addEventListener("click", apriWhatsapp);
+
+  async function inviaHttp(){
+    const r = await fetch(CONFIG.endpoint, {
+      method: "POST",
+      // "text/plain" è un content-type CORS-safelisted: il browser manda la
+      // richiesta diretta, senza preflight OPTIONS. Serve perché Apps Script
+      // non risponde alle OPTIONS: con "application/json" il browser
+      // bloccherebbe tutto PRIMA di inviare, e vedresti un errore CORS
+      // opaco che sembra un problema di rete ma non lo è.
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({
+        votante: inputNome.value.trim(),
+        codice: codice(),
+        testo: messaggio()
+      })
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.err || "voto rifiutato dal server");
+  }
+
+  function mostra(tipo, testo){
+    esito.hidden = false;
+    esito.className = "esito " + tipo;
+    esito.textContent = testo;
+  }
+
+  btnInvia.addEventListener("click", async () => {
+    if (!CONFIG.endpoint) { apriWhatsapp(); return; }
+
+    btnInvia.disabled = true;
+    btnInvia.textContent = "Invio in corso";
+    esito.hidden = true;
+    try {
+      await inviaHttp();
+      btnInvia.textContent = "Voto registrato";
+      mostra("ok", "Voto registrato. Puoi chiudere la pagina.");
+      btnWa.hidden = true;
+      // Promemoria locale, non un lucchetto: serve solo a evitare il doppio
+      // invio per distrazione. Chi vuole rivotare può farlo e lo spoglio
+      // tiene l'ultimo voto.
+      try { localStorage.setItem("voto_inviato", new Date().toISOString()); } catch(e){}
+    } catch (err) {
+      btnInvia.disabled = false;
+      btnInvia.textContent = "Riprova";
+      mostra("ko", "Invio non riuscito (" + err.message + "). Usa WhatsApp qui sotto.");
+      btnWa.hidden = false;
+    }
+  });
+
+  document.getElementById("copia").addEventListener("click", async (e) => {
+    const b = e.currentTarget;
+    if (complete() !== CONFIG.categorie.length || !inputNome.value.trim()) {
+      b.textContent = "Completa prima tutti i premi";
+      setTimeout(() => b.textContent = "Copia il voto come testo", 2200);
+      return;
+    }
+    try {
+      // clipboard API: richiede HTTPS e un gesto dell'utente (ci siamo).
+      await navigator.clipboard.writeText(messaggio());
+      b.textContent = "Copiato";
+    } catch {
+      // fallback: alcuni browser in-app di WhatsApp negano la clipboard
+      const t = document.createElement("textarea");
+      t.value = messaggio(); document.body.appendChild(t);
+      t.select(); document.execCommand("copy"); t.remove();
+      b.textContent = "Copiato";
+    }
+    setTimeout(() => b.textContent = "Copia il voto come testo", 2200);
+  });
+
+  CONFIG.categorie.forEach(c => c._render());
+  aggiornaBarra();
+
+  // localStorage può lanciare in modalità privata su iOS: mai senza try.
+  try {
+    if (localStorage.getItem("voto_inviato")) {
+      mostra("", "Da questo telefono risulta già inviato un voto. Se rivoti, vale l'ultimo.");
+    }
+  } catch(e){}
+})();
+</script>
+</body>
+</html>
