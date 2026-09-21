@@ -15,9 +15,8 @@
    per questo il contenuto è JSON valido (chiavi fra virgolette, niente commenti
    interni, niente virgole finali). Se modifichi qui, lo spoglio si aggiorna da solo.
 
-   "endpoint": URL /exec dell'Apps Script. Se è "" la scheda ricade sul
-   metodo WhatsApp (nessun backend). Se è valorizzato, il voto viene inviato
-   in HTTP e WhatsApp resta solo come rete di sicurezza in caso di errore.
+   "endpoint": URL /exec dell'Apps Script. È OBBLIGATORIO: senza, la scheda
+   si blocca all'avvio invece di accettare voti che non saprebbe dove mandare.
 
    IMPORTANTISSIMO: l'ORDINE degli array "partecipanti" e "categorie" determina
    gli indici numerici usati nel codice voto. Se cambi l'ordine DOPO che qualcuno
@@ -91,13 +90,23 @@ h1{
 /* ---------- campo nome votante ---------- */
 .votante{margin:30px 0 8px}
 label{display:block;font-size:13px;color:var(--muted);margin-bottom:8px}
-input[type=text]{
+input[type=text],select{
   width:100%;padding:13px 15px;border-radius:11px;
   background:var(--surface);border:1px solid var(--line);
   color:var(--paper);font:inherit;
 }
+select{
+  /* appearance:none toglie lo stile nativo su iOS, che altrimenti renderebbe
+     il campo bianco e illeggibile sul fondo scuro. La freccia va quindi
+     ridisegnata a mano come SVG inline. */
+  -webkit-appearance:none;appearance:none;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' stroke='%23A893B0' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 15px center;background-size:12px;
+  padding-right:40px;
+}
+select option{background:var(--surface);color:var(--paper)}
 input[type=text]::placeholder{color:#7B6882}
-input[type=text]:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-color:transparent}
+input[type=text]:focus-visible,select:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-color:transparent}
 
 /* ---------- blocco categoria ---------- */
 .cat{
@@ -134,6 +143,7 @@ input[type=text]:focus-visible{outline:2px solid var(--gold);outline-offset:2px;
 }
 .chip .rank{display:none}
 .chip.nascosto{display:none}
+.chip.escluso{display:none}
 
 .filtro{
   width:100%;padding:9px 13px;border-radius:9px;margin-bottom:12px;
@@ -167,12 +177,6 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
 .esito.ko{border-color:var(--rose);color:var(--rose)}
 .esito[hidden]{display:none}
 
-.secondaria{
-  display:block;width:100%;margin:14px 0 40px;padding:12px;
-  background:transparent;border:1px solid var(--line);border-radius:11px;
-  color:var(--muted);font:inherit;font-size:14px;cursor:pointer;
-}
-.secondaria:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
 
 .avviso{
   font-size:13px;color:var(--muted);text-align:center;
@@ -191,17 +195,17 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
   </header>
 
   <div class="votante">
-    <label for="nome">Il tuo nome</label>
-    <input type="text" id="nome" placeholder="Come ti conoscono alla festa" autocomplete="off" enterkeyhint="done">
+    <label for="nome">Chi sei</label>
+    <select id="nome">
+      <option value="">— seleziona il tuo nome —</option>
+    </select>
   </div>
 
   <main id="schede"></main>
 
   <p class="esito" id="esito" hidden></p>
-  <button class="secondaria" id="wa" hidden>Manda il voto su WhatsApp</button>
-  <button class="secondaria" id="copia">Copia il voto come testo</button>
 
-  <p class="avviso">Il voto arriva solo nella chat privata dell'organizzatore. Nessuno nel gruppo lo vede.</p>
+  <p class="avviso">Il voto è anonimo per gli altri invitati: nessuno vede cosa hai scelto.</p>
 </div>
 
 <div class="barra">
@@ -224,6 +228,13 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
   --------------------------------------------------------------- */
   const voti = {};
   CONFIG.categorie.forEach(c => voti[c.id] = []);
+
+  // Indice del votante nell'array partecipanti, -1 = non ancora selezionato.
+  // Tenerlo come INDICE e non come stringa è ciò che permette allo spoglio
+  // di sapere con certezza chi ha votato e, per differenza, chi manca:
+  // con il nome digitato a mano "Fra", "Francesco" e "franci" sarebbero
+  // tre persone diverse e l'elenco degli assenti non avrebbe senso.
+  let votanteIdx = -1;
 
   const $ = s => document.querySelector(s);
   document.getElementById("titolo").textContent = CONFIG.titolo;
@@ -302,6 +313,10 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
         const pos = scelte.indexOf(i);
         ch.setAttribute("aria-pressed", pos >= 0 ? "true" : "false");
         ch.querySelector(".rank").textContent = (cat.picks > 1 && pos >= 0) ? (pos + 1) : "";
+        // Classe separata da "nascosto": quella la gestisce il filtro di
+        // ricerca, e due funzioni che si contendono la stessa classe si
+        // sovrascrivono a vicenda. Un motivo, una classe.
+        ch.classList.toggle("escluso", CONFIG.vietaAutovoto && i === votanteIdx);
       });
       const done = scelte.length === cat.picks;
       stato.classList.toggle("pieno", done);
@@ -335,8 +350,35 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
   }
 
   const btnInvia = document.getElementById("invia");
-  const inputNome = document.getElementById("nome");
-  inputNome.addEventListener("input", aggiornaBarra);
+  const selNome = document.getElementById("nome");
+
+  // Il menu si popola dalla stessa identica lista usata per i voti: nessun
+  // elenco parallelo, quindi l'indice del votante e l'indice del votato
+  // vivono nello stesso spazio di numerazione.
+  CONFIG.partecipanti.forEach((nome, i) => {
+    const o = document.createElement("option");
+    o.value = String(i);
+    o.textContent = nome;
+    selNome.appendChild(o);
+  });
+
+  selNome.addEventListener("change", () => {
+    votanteIdx = selNome.value === "" ? -1 : parseInt(selNome.value, 10);
+    try { localStorage.setItem("votante_idx", String(votanteIdx)); } catch(e){}
+
+    // Se l'autovoto è vietato e la persona cambia identità DOPO aver già
+    // votato, una scelta fatta prima può essere diventata un autovoto:
+    // va tolta, altrimenti resterebbe selezionata ma invisibile e la
+    // categoria risulterebbe completa senza che si veda perché.
+    if (CONFIG.vietaAutovoto && votanteIdx >= 0) {
+      CONFIG.categorie.forEach(c => {
+        const k = voti[c.id].indexOf(votanteIdx);
+        if (k >= 0) voti[c.id].splice(k, 1);
+      });
+    }
+    CONFIG.categorie.forEach(c => c._render());
+    aggiornaBarra();
+  });
 
   function complete(){
     return CONFIG.categorie.filter(c => voti[c.id].length === c.picks).length;
@@ -344,7 +386,7 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
   function aggiornaBarra(){
     const n = complete();
     document.getElementById("conta").textContent = n + "/" + CONFIG.categorie.length;
-    btnInvia.disabled = !(n === CONFIG.categorie.length && inputNome.value.trim().length >= 2);
+    btnInvia.disabled = !(n === CONFIG.categorie.length && votanteIdx >= 0);
     // Se il votante tocca qualcosa dopo un invio riuscito, l'esito mostrato
     // non descrive più lo stato corrente della scheda: va rimosso, altrimenti
     // resta a schermo un "Voto registrato" che si riferisce a scelte diverse.
@@ -356,29 +398,31 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
 
   /* ---------------------------------------------------------------
      CODIFICA DEL VOTO
-       VOTO<versione>|<nome>|<cat0>|<cat1>|...
-     dove <catN> sono gli indici in base36 separati da "-" nell'ordine
-     di scelta. Base36 tiene ogni indice a 1 carattere fino a 36 nomi.
+       VOTO<versione>|<votante>|<cat0>|<cat1>|...
+     dove <votante> e <catN> sono indici base36 dell'array partecipanti;
+     i <catN> sono separati da "-" nell'ordine di scelta.
+     Base36 tiene ogni indice a 1 carattere fino a 36 nomi.
 
-       VOTO1|Marco|6-9-f|3|1|c|0|h
+       VOTO2|a|6-9-f|3|1|c|0|h
 
      Perché indici e non nomi per esteso:
        - il messaggio resta corto e incollabile senza a capo strani
        - due omonimi non collassano (indici diversi, nomi uguali)
        - lo spoglio non deve fare fuzzy matching su "Giulia"/"giulia "
-     Il pipe "|" è il separatore, quindi va rimosso dal nome votante.
+       - il votante è un indice: l'insieme dei votanti e l'insieme dei
+         partecipanti sono confrontabili, quindi gli assenti si ricavano
+         per differenza invece che a occhio
   --------------------------------------------------------------- */
   function codice(){
-    const nome = inputNome.value.trim().replace(/[|\r\n]/g, " ").slice(0, 40);
     const parti = CONFIG.categorie.map(c =>
       voti[c.id].map(i => i.toString(36)).join("-"));
-    return "VOTO" + CONFIG.versione + "|" + nome + "|" + parti.join("|");
+    return "VOTO" + CONFIG.versione + "|" + votanteIdx.toString(36) + "|" + parti.join("|");
   }
 
   // Parte leggibile: serve al votante per fidarsi di quello che invia
   // e a te per capire a occhio se un messaggio è arrivato monco.
   function messaggio(){
-    const righe = [CONFIG.titolo, "Votante: " + inputNome.value.trim(), ""];
+    const righe = [CONFIG.titolo, "Votante: " + CONFIG.partecipanti[votanteIdx], ""];
     CONFIG.categorie.forEach(c => {
       const nomi = voti[c.id].map(i => CONFIG.partecipanti[i]);
       righe.push(c.nome + ": " + (c.picks > 1
@@ -391,22 +435,22 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
 
   /* ---------------------------------------------------------------
      INVIO
-     Due canali, in ordine di preferenza:
-       1. POST all'endpoint (Apps Script -> Google Sheet). Automatico.
-       2. WhatsApp. Manuale, ma non dipende da nessun servizio esterno.
-     Il secondo non è un ripiego estetico: è il piano B che si attiva da
-     solo se il primo fallisce. Un votante che vede "errore" e basta è un
-     voto perso; un votante che vede un pulsante alternativo no.
+     Canale unico: POST all'endpoint. Niente ripieghi manuali.
+     Senza un piano B il costo di un errore sale, quindi la gestione
+     dell'errore deve diventare più seria, non più semplice:
+       - ritenta da sola due volte prima di dare buca al votante
+       - distingue "internet assente" da "server che risponde male",
+         perché al votante servono due azioni diverse
+       - lascia SEMPRE il pulsante riattivabile: un voto perso qui non
+         si recupera in nessun altro modo.
   --------------------------------------------------------------- */
   const esito = document.getElementById("esito");
-  const btnWa = document.getElementById("wa");
 
-  function apriWhatsapp(){
-    // wa.me apre la chat PRIVATA del numero indicato, non il gruppo.
-    window.open("https://wa.me/" + CONFIG.whatsapp +
-                "?text=" + encodeURIComponent(messaggio()), "_blank", "noopener");
+  function mostra(tipo, testo){
+    esito.hidden = false;
+    esito.className = "esito " + tipo;
+    esito.textContent = testo;
   }
-  btnWa.addEventListener("click", apriWhatsapp);
 
   async function inviaHttp(){
     const r = await fetch(CONFIG.endpoint, {
@@ -418,71 +462,80 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
       // opaco che sembra un problema di rete ma non lo è.
       headers: { "Content-Type": "text/plain;charset=utf-8" },
       body: JSON.stringify({
-        votante: inputNome.value.trim(),
+        votante: CONFIG.partecipanti[votanteIdx],
         codice: codice(),
         testo: messaggio()
       })
     });
-    if (!r.ok) throw new Error("HTTP " + r.status);
+    if (!r.ok) throw new Error("il server ha risposto " + r.status);
     const d = await r.json();
     if (!d.ok) throw new Error(d.err || "voto rifiutato dal server");
   }
 
-  function mostra(tipo, testo){
-    esito.hidden = false;
-    esito.className = "esito " + tipo;
-    esito.textContent = testo;
-  }
+  const attesa = ms => new Promise(r => setTimeout(r, ms));
 
   btnInvia.addEventListener("click", async () => {
-    if (!CONFIG.endpoint) { apriWhatsapp(); return; }
-
     btnInvia.disabled = true;
-    btnInvia.textContent = "Invio in corso";
     esito.hidden = true;
-    try {
-      await inviaHttp();
-      btnInvia.textContent = "Voto registrato";
-      mostra("ok", "Voto registrato. Puoi chiudere la pagina.");
-      btnWa.hidden = true;
-      // Promemoria locale, non un lucchetto: serve solo a evitare il doppio
-      // invio per distrazione. Chi vuole rivotare può farlo e lo spoglio
-      // tiene l'ultimo voto.
-      try { localStorage.setItem("voto_inviato", new Date().toISOString()); } catch(e){}
-    } catch (err) {
-      btnInvia.disabled = false;
-      btnInvia.textContent = "Riprova";
-      mostra("ko", "Invio non riuscito (" + err.message + "). Usa WhatsApp qui sotto.");
-      btnWa.hidden = false;
-    }
-  });
 
-  document.getElementById("copia").addEventListener("click", async (e) => {
-    const b = e.currentTarget;
-    if (complete() !== CONFIG.categorie.length || !inputNome.value.trim()) {
-      b.textContent = "Completa prima tutti i premi";
-      setTimeout(() => b.textContent = "Copia il voto come testo", 2200);
-      return;
+    // Tre tentativi con pausa crescente. In una casa piena di gente il 4G
+    // va a singhiozzo: un errore di rete è quasi sempre transitorio, e
+    // ritentare da soli evita di scaricare sul votante un problema che si
+    // risolve in due secondi. La pausa cresce per non martellare il server
+    // se invece il problema è suo.
+    for (let tentativo = 1; tentativo <= 3; tentativo++) {
+      btnInvia.textContent = tentativo === 1 ? "Invio in corso" : "Nuovo tentativo " + tentativo;
+      try {
+        await inviaHttp();
+        btnInvia.textContent = "Voto registrato";
+        mostra("ok", "Voto registrato. Puoi chiudere la pagina.");
+        // Promemoria locale, non un lucchetto: serve solo a evitare il
+        // doppio invio per distrazione. Chi vuole rivotare può farlo e lo
+        // spoglio tiene l'ultimo voto.
+        try { localStorage.setItem("voto_inviato", new Date().toISOString()); } catch(e){}
+        return;
+      } catch (err) {
+        if (tentativo === 3) {
+          btnInvia.disabled = false;
+          btnInvia.textContent = "Riprova";
+          // TypeError da fetch() = la richiesta non è mai partita (rete
+          // assente o DNS). Qualsiasi altro errore = il server ha risposto,
+          // ma male. Sono due problemi diversi e due azioni diverse.
+          mostra("ko", err instanceof TypeError
+            ? "Connessione assente. Controlla la rete e premi Riprova."
+            : "Invio non riuscito: " + err.message + ". Premi Riprova fra qualche secondo.");
+        } else {
+          await attesa(tentativo * 1500);
+        }
+      }
     }
-    try {
-      // clipboard API: richiede HTTPS e un gesto dell'utente (ci siamo).
-      await navigator.clipboard.writeText(messaggio());
-      b.textContent = "Copiato";
-    } catch {
-      // fallback: alcuni browser in-app di WhatsApp negano la clipboard
-      const t = document.createElement("textarea");
-      t.value = messaggio(); document.body.appendChild(t);
-      t.select(); document.execCommand("copy"); t.remove();
-      b.textContent = "Copiato";
-    }
-    setTimeout(() => b.textContent = "Copia il voto come testo", 2200);
   });
 
   CONFIG.categorie.forEach(c => c._render());
   aggiornaBarra();
 
+  // Guardia di configurazione. Ora che non esiste un canale alternativo,
+  // pubblicare la scheda con l'endpoint vuoto significherebbe raccogliere
+  // zero voti senza che nessuno se ne accorga fino a spoglio fallito.
+  // Meglio un blocco evidente e immediato che un silenzio credibile.
+  if (!CONFIG.endpoint) {
+    btnInvia.disabled = true;
+    btnInvia.textContent = "Non configurata";
+    mostra("ko", "Questa scheda non ha un endpoint configurato: i voti non "
+                 + "verrebbero registrati. Avvisa l'organizzatore.");
+    return;
+  }
+
   // localStorage può lanciare in modalità privata su iOS: mai senza try.
   try {
+    // Ripristino chi era: se ricarica la pagina per sbaglio non deve
+    // ricercarsi nell'elenco. Le scelte no, quelle si rifanno: mezzo voto
+    // ripristinato è peggio di nessun voto, perché sembra completo.
+    const salvato = localStorage.getItem("votante_idx");
+    if (salvato !== null && +salvato >= 0 && +salvato < CONFIG.partecipanti.length) {
+      selNome.value = salvato;
+      selNome.dispatchEvent(new Event("change"));
+    }
     if (localStorage.getItem("voto_inviato")) {
       mostra("", "Da questo telefono risulta già inviato un voto. Se rivoti, vale l'ultimo.");
     }
