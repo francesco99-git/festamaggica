@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="it">
 <head>
@@ -25,16 +26,17 @@
    contarli male (fallire rumorosamente > sbagliare in silenzio).
 ====================================================================== */
 const CONFIG = {
-  "versione": 1,
+  "versione": 2,
   "titolo": "Premi della festa",
   "sottotitolo": "Scegli un nome per ogni premio. Ci vuole un minuto.",
-  "whatsapp": "393347951530",
   "endpoint": "https://script.google.com/macros/s/AKfycbwZrMhV4gp4YHDa6OaIhprxquGBTvvr60iq3DmfcRuFbg-RYm_HLoRg2c71VbA1tmHu/exec",
+  "vietaAutovoto": false,
 
   "partecipanti": [
     "Alice", "Beatrice", "Carlo", "Davide", "Elena",
     "Federico", "Giulia", "Ilaria", "Jacopo", "Luca",
-    "Marco", "Nadia", "Omar"
+    "Marco", "Nadia", "Omar", "Paola", "Riccardo",
+    "Sara", "Tommaso", "Valentina"
   ],
 
   "categorie": [
@@ -236,6 +238,12 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
   // tre persone diverse e l'elenco degli assenti non avrebbe senso.
   let votanteIdx = -1;
 
+  // Le opzioni del CONFIG si normalizzano UNA volta qui, non a ogni uso.
+  // "=== true" e non "!!": una chiave assente, una stringa "false" o un
+  // valore sbagliato diventano tutti false, invece di propagare undefined
+  // nel resto del codice. Un valore non validato è un bug che aspetta.
+  const VIETA_AUTOVOTO = CONFIG.vietaAutovoto === true;
+
   const $ = s => document.querySelector(s);
   document.getElementById("titolo").textContent = CONFIG.titolo;
   document.getElementById("sottotitolo").textContent = CONFIG.sottotitolo;
@@ -282,8 +290,10 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
           // un nome selezionato resta sempre visibile: altrimenti
           // l'utente non può deselezionarlo mentre filtra
           const sel = ch.getAttribute("aria-pressed") === "true";
+          // Boolean() esplicito: toggle con un secondo argomento non
+          // booleano è la trappola che ha rotto i chip del podio.
           ch.classList.toggle("nascosto",
-            !sel && q !== "" && !ch.dataset.nome.toLowerCase().includes(q));
+            Boolean(!sel && q !== "" && !ch.dataset.nome.toLowerCase().includes(q)));
         });
       });
       sez.appendChild(f);
@@ -316,7 +326,7 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
         // Classe separata da "nascosto": quella la gestisce il filtro di
         // ricerca, e due funzioni che si contendono la stessa classe si
         // sovrascrivono a vicenda. Un motivo, una classe.
-        ch.classList.toggle("escluso", CONFIG.vietaAutovoto && i === votanteIdx);
+        ch.classList.toggle("escluso", VIETA_AUTOVOTO && i === votanteIdx);
       });
       const done = scelte.length === cat.picks;
       stato.classList.toggle("pieno", done);
@@ -370,7 +380,7 @@ button.invia:focus-visible{outline:2px solid var(--paper);outline-offset:2px}
     // votato, una scelta fatta prima può essere diventata un autovoto:
     // va tolta, altrimenti resterebbe selezionata ma invisibile e la
     // categoria risulterebbe completa senza che si veda perché.
-    if (CONFIG.vietaAutovoto && votanteIdx >= 0) {
+    if (VIETA_AUTOVOTO && votanteIdx >= 0) {
       CONFIG.categorie.forEach(c => {
         const k = voti[c.id].indexOf(votanteIdx);
         if (k >= 0) voti[c.id].splice(k, 1);
